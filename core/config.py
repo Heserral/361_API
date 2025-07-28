@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     keycloak_realm: str = Field("realm_name", env="KEYCLOAK_REALM")
     keycloak_client_id: str = Field("client_id", env="KEYCLOAK_CLIENT_ID")
     keycloak_client_secret: str = Field("client_secret", env="KEYCLOAK_CLIENT_SECRET")
-    keycloak_verify: bool = Field(False, env="KEYCLOAK_VERIFY")
+    keycloak_verify: bool = Field(True, env="KEYCLOAK_VERIFY")
     #-------------------------MYSQL---------PORT=3306--------------
     mysql_host: str = Field("localhost", env="MYSQL_HOST")
     mysql_user: str = Field("username", env="MYSQL_USER")

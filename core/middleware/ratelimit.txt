@@ -1,0 +1,51 @@
+from fastapi import Request, status
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from core.redismanager import RedisClient
+from core.logger import logger
+
+# Instancia única de Redis
+redis_client = RedisClient.get_instance()
+
+# auth_rate:h.serrano@inovalabs.es
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        # Se asume que el middleware de autenticación ha agregado la información del usuario en request.state.user.
+        user_info = getattr(request.state, "user", None)
+        
+        if not user_info:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "Usuario no autenticado"}
+            )
+
+        # Se obtiene un identificador único para el usuario (por ejemplo, "email")
+        user_id = user_info.get("email")
+        if not user_id:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "No se pudo determinar el usuario autenticado"}
+            )
+
+        # Se obtiene el límite de solicitudes (requests per minute) basado en la propiedad 'rpm'
+        # Si no se especifica 'rpm', se usa un valor por defecto (en este ejemplo 1)
+        max_requests = int(user_info.get("rpm", 1))
+
+        # Se arma una clave única en Redis para este usuario
+        redis_key = f"auth_rate:{user_id}"
+
+        current_count = await redis_client.incr(redis_key)
+
+        if current_count == 1:
+            # Establece el tiempo de expiración en 60 segundos si es la primera solicitud
+            await redis_client.expire(redis_key, 60)
+
+        if current_count > max_requests:
+            return JSONResponse(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                content={"detail": "Demasiadas solicitudes, límite excedido debes espera 1 minuto para continuar"}
+            )
+
+        response = await call_next(request)
+        return response

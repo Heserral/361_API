@@ -1,8 +1,9 @@
 from fastapi import APIRouter
-from .account import router as accountd
+
+from .vr import router as vrd
 
 
 router = APIRouter()
 #router = APIRouter(prefix='/api')
 
-router.include_router(accountd)
+router.include_router(vrd)

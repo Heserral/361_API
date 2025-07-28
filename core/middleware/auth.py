@@ -1,5 +1,4 @@
-import asyncio
-import json
+
 from fastapi import Request, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -7,7 +6,8 @@ from keycloak import KeycloakOpenID
 from core.config import keycloak_server_url, keycloak_realm, keycloak_client_id, keycloak_client_secret, keycloak_verify
 from core.logger import logger
 from core.db import MySQLManager
-
+from models.auth import UserAuth
+import json
 
 # AuthMiddleware --> dispatch --> get_current_user (Auth o x-api) --> introspect_keycloak_token(comprueba token y retorna info del usuario desd BD) --> dispatch -> request.state.user --> call_next
 
@@ -72,24 +72,12 @@ async def introspect_keycloak_token(token: str, is_client_credentials: bool = Fa
 
         #----------------COMPROBAMOS SI ES UN TOKEN DE USUARIO--------------------------------
         else:
-            # Lógica existente para autenticación de usuarios
             if "email" not in token_info:
                 logger.error("Token no contiene email")
                 return JSONResponse(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     content={"detail": "Token no válido para usuario"}
                 )
-
-            # db = await MySQLManager.get_connection()
-            # async with db.cursor() as cursor:
-            #     await cursor.execute("SELECT * FROM users WHERE email = %s", (token_info["email"],))
-            #     user_info = await cursor.fetchone()
-            # if user_info is None:
-            #     logger.error(f"El usuario {token_info['email']} no existe en la base de datos")
-            #     return JSONResponse(
-            #         status_code=status.HTTP_401_UNAUTHORIZED,
-            #         content={"detail": "Error de autenticación"}
-            #     )
 
             return {
                 "email": token_info["email"],
@@ -122,12 +110,60 @@ async def get_current_user(request: Request):
 
     # Intentar como token de usuario primero
     user_info = await introspect_keycloak_token(token, is_client_credentials=False)
+
+    #Si es una request de cliente, introspectar nos devuelve un error k contiene el texto "no válido para usuario"
     if isinstance(user_info, JSONResponse) and "no válido para usuario" in user_info.body.decode():
         # Si falla como usuario, intentar como client credentials
         user_info = await introspect_keycloak_token(token, is_client_credentials=True)
 
-    if isinstance(user_info, JSONResponse):
-        return user_info
+    #Si el token es válido para un usuario o cliente, siempre retirna un type en el resto de casos no
+    if "type" in user_info:
+        # user con email
+        # {
+        #   "email": "heserral@gmail.com",
+        #   "sub": "3befe591-2203-4bbb-94ce-ee275b6224da",
+        #   "roles": [],
+        #   "type": "user"
+        # }
+        # client con client_id
+        # {
+        #   "client_id": "your_client_id",
+        #   "roles": [],
+        #   "scopes": [],
+        #   "type": "client"
+        # }
+
+        query ="SELECT * FROM users WHERE "
+        if user_info["type"] == "client":
+            query +="client_id = %s", (user_info["client_id"],)
+        elif user_info["type"] == "user":
+            query +="email = %s", (user_info["email"],)
+        else:
+            return JSONResponse(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                content={"detail": "not client nor user"}
+            )
+            
+        db = await MySQLManager.get_connection()
+        async with db.cursor(dictionary=True) as cursor: #Ensure cursor returns dictionaries
+            await cursor.execute(query)
+            user_db_info = await cursor.fetchone()
+        if not user_db_info:
+            logger.warning(f"No se encontro al usuario")
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={"detail": "Usuario no existe"}
+            )
+
+        try:
+            user_info = UserAuth(**user_db_info)
+            return user_info
+        except ValueError as e:
+            logger.error(f"Error casting route to model: {e}")
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"detail": "Error al procesar la ruta"}
+            )
 
     if not user_info:
         return JSONResponse(
@@ -135,7 +171,7 @@ async def get_current_user(request: Request):
             content={"detail": "Token inactivo o expirado"}
         )
 
-
+    
     # #----------------API KEY--------------------------------
     # elif request.headers.get("X-API-Key"):
     #     user_info = arequest.headers.get("X-API-Key")
@@ -157,10 +193,10 @@ async def get_current_user(request: Request):
     #             content={"detail": "API key revocada o inválida"}
     #         )
     #     return user_info
-
+    
     return JSONResponse(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        content={"detail": "No se proporcionaron credenciales de autenticación"}
+        content={"detail": "No se proporcionaron credenciales de autenticación."}
     )
 
 class AuthMiddleware(BaseHTTPMiddleware):
