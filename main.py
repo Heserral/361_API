@@ -28,7 +28,7 @@ app = FastAPI(
     version="1.0.0",
     redirect_slashes=False,
     description="""
-        Documentación general de la API de BOEIA.
+        Documentación general de la API de 361.
     """,
     dependencies=[Depends(oauth2_scheme)]
 )
